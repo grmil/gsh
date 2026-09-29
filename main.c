@@ -28,57 +28,55 @@ int read_line(char **line) {
  * separates args in a string by space chars
  *
  * line: string that is read in from stdin
- * args: where to store the parsed args for future use
- * does not return anything
+ * returns a pointer to a character array
  */
-int parse_line(char *line, char ***args_ptr) {
-  size_t size = 8;
-  char **args = malloc(size * sizeof(char *));
-  if (args == NULL) {
-    return -1;
-  }
+char **parse_line(char *line) {
+    size_t size = 8;
+    char **args = malloc(size * sizeof(char *));
+    if (args == NULL) return NULL;
 
-  // give strtok the string to work on in the first call
-  char *token = strtok(line, " \n");
-
-  size_t i = 0;
-  while (token != NULL) {
-
-    if (i >= size) {
-      size *= 2;
-      
-      // Reallocate if more memory is needed
-      char **tmp = realloc(args, size * sizeof(char *));
-      if (tmp == NULL) {
-        free(args);
-        return -1;
-      }
-      args = tmp;
+    size_t i = 0;
+    char *token = strtok(line, " \t\n");
+    while (token != NULL) {
+        // Using i+1 here prevents having to realloc for the NULL character
+        if (i + 1 >= size) {
+            size *= 2;
+            char **tmp = realloc(args, size * sizeof(char *));
+            if (tmp == NULL) { free(args); return NULL; }
+            args = tmp;
+        }
+        args[i++] = token;
+        token = strtok(NULL, " \t\n");
     }
-
-    args[i] = token;
-
-    // later calls to strtok use the same string as the first
-    token = strtok(NULL, " \n");
-    i++;
-  }
-
-  // Reallocate if memory is needed to add NULL arg
-  if (i >= size) {
-    size += 1;
-
-    char **tmp = realloc(args, size * sizeof(char *));
-    if (tmp == NULL) {
-      free(args);
-      return -1;
+    args[i] = NULL;
+    return args;
+}
+char ***chop_args(char **args) {
+  int num_cmds = 1;
+  for (int i = 0; args[i] != NULL; i++) {
+    if (strcmp(args[i], "|") == 0) {
+      num_cmds++;
     }
-    args = tmp;
   }
 
-  // add null arg for exec syscall to work
-  args[i] = NULL;
-  *args_ptr = args;
-  return 0;
+  // +1 slot for a NULL terminator so the caller can find the count
+  char ***cmds = malloc((num_cmds + 1) * sizeof(char **));
+  if (cmds == NULL) {
+    return NULL;
+  }
+
+  int curr = 0;
+  cmds[curr++] = &args[0];
+  for (int k = 0; args[k] != NULL; k++) {
+    // Replace pipes with NULL and point to the cmd
+    if (strcmp(args[k], "|") == 0) {
+      args[k] = NULL;
+      cmds[curr++] = &args[k + 1];
+    }
+  }
+  cmds[curr] = NULL;
+
+  return cmds;
 }
 
 /*
@@ -89,6 +87,9 @@ int parse_line(char *line, char ***args_ptr) {
  * returns the error code
  */
 int execute_args(char **args, char *line) {
+
+  
+
   pid_t pid;
 
   // create child process
@@ -122,6 +123,7 @@ int execute_args(char **args, char *line) {
  * main execution loop of the shell
  * no args are needed and it returns nothing
  */
+// TODO: Change all functions to use cmds instead of args, change free() too
 void sh_loop() {
   while (true) {
     char *line = NULL;
@@ -142,9 +144,17 @@ void sh_loop() {
     };
 
     // populating `args` using the line that is read in from stdin
-    int status;
-    if ((status = parse_line(line, &args)) == -1) {
+    if ((char **args = parse_line(line)) == NULL) {
       perror("Parsing Error");
+      free(line);
+      free(args);
+      continue;
+    }
+
+    // Replace pipes with NULL and return pointers to each separate cmd
+    char ***cmds;
+    if ((cmds = chop_args(args)) == NULL) {
+      perror("Piping Error");
       free(line);
       free(args);
       continue;
@@ -158,13 +168,14 @@ void sh_loop() {
       continue;
     } 
 
-    // Run built-in quit command
-    if (strcmp(args[0], "quit") == 0) {
+    // Run built-in exit command
+    if (strcmp(args[0], "exit") == 0) {
       free(line);
       free(args);
       break;
     }
 
+    // TODO: move built-ins to after exec so they can be piped if needed
     // Run built-in cd command
     if (strcmp(args[0], "cd") == 0) {
       if (args[1] == NULL) {
