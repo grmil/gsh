@@ -126,10 +126,6 @@ int execute_args(char **args, char *line) {
 // TODO: Change all functions to use cmds instead of args, change free() too
 void sh_loop() {
   while (true) {
-    char *line = NULL;
-    char **args = NULL;
-    int nread;
-
     // Output the prompt
     // env can be set up here later for custom prompt
     const char *user = getenv("USER");
@@ -138,13 +134,16 @@ void sh_loop() {
 
     // handle reading failures
     // nread returns num chars on success
+    int nread;
+    char *line = NULL;
     if ((nread = read_line(&line)) == -1) {
       free(line);
       continue;
     };
 
     // populating `args` using the line that is read in from stdin
-    if ((char **args = parse_line(line)) == NULL) {
+    char **args = NULL;
+    if ((args = parse_line(line)) == NULL) {
       perror("Parsing Error");
       free(line);
       free(args);
