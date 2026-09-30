@@ -5,6 +5,9 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#define READ 0
+#define WRITE 1
+
 /*
  * reads in a dynamically allocated line from stdin
  *
@@ -79,17 +82,7 @@ char ***chop_args(char **args) {
   return cmds;
 }
 
-/*
- * creates and runs the desired process
- *
- * args: takes in an array of args
- * line: passed in to free from child processes
- * returns the error code
- */
-int execute_args(char **args, char *line) {
-
-  
-
+int execute_single(char **args, char *line) {
   pid_t pid;
 
   // create child process
@@ -120,12 +113,83 @@ int execute_args(char **args, char *line) {
 }
 
 /*
+ * creates and runs the desired process
+ *
+ * args: takes in an array of args
+ * line: passed in to free from child processes
+ * returns the error code
+ */
+int execute_pipe(char ***cmds, char *line, int n) {
+  int prev = -1;
+
+  if (n == 0) return -1;
+  pid_t pids[n];
+
+  // Go through each of the cmds available
+  for (int i = 0; i < n; ++i) {
+    int fd[2];
+
+    if (pipe(fd) < 0) {
+      perror("Pipe Error");
+      return -1;
+    } 
+
+    pid_t pid;
+    if ((pid = fork()) < 0) {
+      perror("Fork Failed");
+      return -1;
+    }
+
+    // Set the curr process to read from previous pipe if possible
+    if (pid == 0) {
+      if (prev != -1) {
+        dup2(prev, STDIN_FILENO);
+        close(prev);
+      }  
+
+      // Set the curr process to write to the next pipe if possible
+      if (i < n - 1) {
+        dup2(fd[WRITE], STDOUT_FILENO);
+        close(fd[READ]);
+        close(fd[WRITE]);
+      }
+
+      // Execute the child process
+      if (execvp(cmds[i][0], cmds[i]) == -1) {
+        free(line);
+        free(cmds);
+        perror("Exec failed");
+        exit(-1);
+      }
+    }
+
+    // Parent process
+    pids[i] = pid;
+    if (prev != -1) {
+      close(prev);
+    }
+    
+    if (i < n - 1) {
+      close(fd[WRITE]);
+      prev = fd[READ]; // Save the current read end of pipe for the next
+                       // process to use
+    }
+
+  }
+    // Wait for all children to finish, in no particular order
+  for (int i = 0; i < n; ++i) {
+    waitpid(pids[i], NULL, 0);
+  }
+  return 0;
+}
+
+/*
  * main execution loop of the shell
  * no args are needed and it returns nothing
  */
 // TODO: Change all functions to use cmds instead of args, change free() too
 void sh_loop() {
-  while (true) {
+  while (1) {
     // Output the prompt
     // env can be set up here later for custom prompt
     const char *user = getenv("USER");
@@ -154,11 +218,10 @@ void sh_loop() {
     char ***cmds;
     if ((cmds = chop_args(args)) == NULL) {
       perror("Piping Error");
-      free(line);
       free(args);
+      free(line);
       continue;
     }
-
 
     // Skip blank commands
     if (args[0] == NULL) {
@@ -166,6 +229,7 @@ void sh_loop() {
       free(args);
       continue;
     } 
+    // TODO: do this but for each item in cmds
 
     // Run built-in exit command
     if (strcmp(args[0], "exit") == 0) {
@@ -197,8 +261,17 @@ void sh_loop() {
     }
     
     // create and run the desired process (fork-exec)
+    
+    int n = 0;
+    while (cmds[n] != NULL) n++;
+
+    // Use a single or piped setup
     int estatus;
-    estatus = execute_args(args, line);
+    if (n == 1) {
+      estatus = execute_single(args, line);
+    } else {
+      estatus = execute_pipe(cmds, line, n);
+    }
 
     switch (estatus) {
       case -1:
@@ -211,6 +284,7 @@ void sh_loop() {
     }
     free(line);
     free(args);
+    free(cmds);
   }  
 }
 
