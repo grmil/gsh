@@ -82,7 +82,7 @@ char ***chop_args(char **args) {
   return cmds;
 }
 
-int execute_single(char **args, char *line) {
+int execute_single(char **args, char *line, char ***cmds) {
   pid_t pid;
 
   // create child process
@@ -104,6 +104,7 @@ int execute_single(char **args, char *line) {
   } else if (pid == 0) {
     // child execution
     if (execvp(args[0], args) == -1) {
+      free(cmds);
       free(line);
       free(args);
       exit(127);
@@ -201,7 +202,6 @@ void sh_loop() {
     int nread;
     char *line = NULL;
     if ((nread = read_line(&line)) == -1) {
-      free(line);
       continue;
     };
 
@@ -225,6 +225,7 @@ void sh_loop() {
 
     // Skip blank commands
     if (args[0] == NULL) {
+      free(cmds);
       free(line);
       free(args);
       continue;
@@ -233,6 +234,7 @@ void sh_loop() {
 
     // Run built-in exit command
     if (strcmp(args[0], "exit") == 0) {
+      free(cmds);
       free(line);
       free(args);
       break;
@@ -255,6 +257,7 @@ void sh_loop() {
           perror("cd");
         }
       }
+      free(cmds);
       free(line);
       free(args);
       continue;
@@ -268,7 +271,7 @@ void sh_loop() {
     // Use a single or piped setup
     int estatus;
     if (n == 1) {
-      estatus = execute_single(args, line);
+      estatus = execute_single(args, line, cmds);
     } else {
       estatus = execute_pipe(cmds, line, n);
     }
