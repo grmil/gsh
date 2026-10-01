@@ -267,7 +267,7 @@ int execute_single(char **args, char *line, char ***cmds, char *line_copy) {
     if (strcmp(clean_cmd[0], "history") == 0) {
       history_cmd();
       child_clean(line, args, cmds, clean_cmd, line_copy);
-      exit(0);
+      exit(-2);
 
     } else if (execvp(clean_cmd[0], clean_cmd) == -1) {
       child_clean(line, args, cmds, clean_cmd, line_copy);
@@ -319,7 +319,7 @@ int execute_pipe(char ***cmds, char **args, char *line, int n, char *line_copy) 
       if (strcmp(clean_cmd[0], "history") == 0) {
         history_cmd();
         child_clean(line, args, cmds, clean_cmd, line_copy);
-        exit(0);
+        exit(-2);
 
       } else if (execvp(clean_cmd[0], clean_cmd) == -1) {
         child_clean(line, args, cmds, clean_cmd, line_copy);
@@ -376,7 +376,7 @@ void sh_loop() {
     
     // Rerun cmds from history using the ! operator and an integer
     if (line[0] == '!') {
-      char *prev_cmd = history_get(atoi(line + 1) + 1);
+      char *prev_cmd = history_get(atoi(line + 1));
       if (prev_cmd == NULL) {
         fprintf(stderr, "history: no such entry\n");
         free(line);
@@ -434,7 +434,6 @@ void sh_loop() {
       free(cmds);
       free(line);
       free(args);
-      history_add(line_copy);
       free(line_copy);
       break;
     }
