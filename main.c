@@ -61,6 +61,13 @@ void history_cmd() {
   }
 }
 
+char *history_get(int val) {
+  if (val < 1 || val > HISTORY_MAX) return NULL;
+
+  int index = (history_curr + HISTORY_MAX - val) % HISTORY_MAX;
+  return history[index];
+}
+
 /*
  * reads in a dynamically allocated line from stdin
  *
@@ -366,7 +373,25 @@ void sh_loop() {
       free(line);
       break;
     };
+    
+    // Rerun cmds from history using the ! operator and an integer
+    if (line[0] == '!') {
+      char *prev_cmd = history_get(atoi(line + 1) + 1);
+      if (prev_cmd == NULL) {
+        fprintf(stderr, "history: no such entry\n");
+        free(line);
+        continue;
+      }
 
+      free(line);
+      line = strdup(prev_cmd);
+      if (line == NULL) {
+        perror("strdup");
+        continue;
+      }
+    }
+
+    // Keep a copy of the line for saving to history
     char *line_copy = strdup(line);
     if (line_copy == NULL) {
       free(line);
@@ -478,7 +503,7 @@ void sh_loop() {
 }
 
 int main() {
-  // Initialization Stuff -- config, default execution
+  // Put Initialization Stuff Here -- config, default execution
   sh_loop();
   for (int i = 0; i < HISTORY_MAX; ++i) {
     free(history[i]);
