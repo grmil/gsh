@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 
 #define READ 0
 #define WRITE 1
@@ -54,6 +55,7 @@ char **parse_line(char *line) {
     args[i] = NULL;
     return args;
 }
+
 char ***chop_args(char **args) {
   int num_cmds = 1;
   for (int i = 0; args[i] != NULL; i++) {
@@ -82,6 +84,103 @@ char ***chop_args(char **args) {
   return cmds;
 }
 
+// This func is meant to be run inside a child function setup redirects
+char** parse_redirects(char** cmd) {
+  char *infile = NULL;
+  char *outfile = NULL;
+  int force = 0;
+
+  // Allocate the size for all tokens plus a NULL so we always have enough
+  int n = 0;
+  while (cmd[n] != NULL) n++;
+  char **clean_cmd = malloc((n + 1) * sizeof(char *));
+  if (clean_cmd == NULL) {
+    perror("malloc");
+    return NULL;
+  }
+
+  int argc = 0;
+  int seen_redirect = 0;
+
+  int i = 0;
+  while (cmd[i] != NULL) {
+    if (strcmp(cmd[i], "<") == 0) {
+      if (cmd[i + 1] == NULL) {
+        fprintf(stderr, "syntax error: missing filename after <\n");
+        free(clean_cmd);
+        return NULL;
+      }
+      infile = cmd[i + 1];
+      seen_redirect = 1;
+      i++;
+
+    } else if (strcmp(cmd[i], ">") == 0) {
+      if (cmd[i + 1] == NULL) {
+        fprintf(stderr, "syntax error: missing filename after >\n");
+        free(clean_cmd);
+        return NULL;
+      }
+      outfile = cmd[i + 1];
+      seen_redirect = 1;
+      i++;
+
+    } else if (strcmp(cmd[i], ">!") == 0) {
+      if (cmd[i + 1] == NULL) {
+        fprintf(stderr, "syntax error: missing filename after >!\n");
+        free(clean_cmd);
+        return NULL;
+      }
+      outfile = cmd[i + 1];
+      force = 1;
+      seen_redirect = 1;
+      i++;
+
+    } else if (!seen_redirect) {
+      clean_cmd[argc++] = cmd[i];
+    }
+    i++;
+  }
+  clean_cmd[argc] = NULL;
+
+  if (argc == 0) {
+    fprintf(stderr, "syntax error: missing command\n");
+    free(clean_cmd);
+    return NULL;
+  }
+
+  if (infile != NULL) {
+    int fd = open(infile, O_RDONLY);
+    if (fd < 0) {
+      perror(infile);
+      free(clean_cmd);
+      return NULL;
+    }
+
+    dup2(fd, STDIN_FILENO);
+    close(fd);
+  }
+
+  if (outfile != NULL) {
+    if (force == 0) {
+      if (access(outfile, F_OK) == 0) {
+        fprintf(stderr, "%s: file exists, use `>!' instead\n", outfile);
+        free(clean_cmd);
+        return NULL;
+      }
+    }
+    int fd = open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+      perror(outfile);
+      free(clean_cmd);
+      return NULL;
+    }
+    dup2(fd, STDOUT_FILENO);
+    close(fd);
+  }
+
+  return clean_cmd;
+}
+
 int execute_single(char **args, char *line, char ***cmds) {
   pid_t pid;
 
@@ -103,23 +202,19 @@ int execute_single(char **args, char *line, char ***cmds) {
 
   } else if (pid == 0) {
     // child execution
-    if (execvp(args[0], args) == -1) {
+    char **clean_cmd = parse_redirects(args);
+    if (clean_cmd == NULL) exit(1);
+    if (execvp(clean_cmd[0], clean_cmd) == -1) {
       free(cmds);
       free(line);
       free(args);
+      free(clean_cmd);
       exit(127);
     }
   }
   return -1;
 }
 
-/*
- * creates and runs the desired process
- *
- * args: takes in an array of args
- * line: passed in to free from child processes
- * returns the error code
- */
 int execute_pipe(char ***cmds, char *line, int n) {
   int prev = -1;
 
@@ -128,12 +223,12 @@ int execute_pipe(char ***cmds, char *line, int n) {
 
   // Go through each of the cmds available
   for (int i = 0; i < n; ++i) {
-    int fd[2];
+    int fd[2] = {-1, -1};
 
-    if (pipe(fd) < 0) {
+    if (i < n - 1 && pipe(fd) < 0) {
       perror("Pipe Error");
       return -1;
-    } 
+    }
 
     pid_t pid;
     if ((pid = fork()) < 0) {
@@ -146,7 +241,7 @@ int execute_pipe(char ***cmds, char *line, int n) {
       if (prev != -1) {
         dup2(prev, STDIN_FILENO);
         close(prev);
-      }  
+      }
 
       // Set the curr process to write to the next pipe if possible
       if (i < n - 1) {
@@ -156,9 +251,12 @@ int execute_pipe(char ***cmds, char *line, int n) {
       }
 
       // Execute the child process
-      if (execvp(cmds[i][0], cmds[i]) == -1) {
+      char **clean_cmd = parse_redirects(cmds[i]);
+      if (clean_cmd == NULL) _exit(1);
+      if (execvp(clean_cmd[0], clean_cmd) == -1) {
         free(line);
         free(cmds);
+        free(clean_cmd);
         perror("Exec failed");
         exit(-1);
       }
@@ -169,7 +267,7 @@ int execute_pipe(char ***cmds, char *line, int n) {
     if (prev != -1) {
       close(prev);
     }
-    
+
     if (i < n - 1) {
       close(fd[WRITE]);
       prev = fd[READ]; // Save the current read end of pipe for the next
